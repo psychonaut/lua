@@ -3,6 +3,8 @@ local ip = require "ip_address"
 local l = require 'lpeg'
 local syslog = require "syslog"
 
+require "cjson"
+
 l.locale(l)
 
 local msg = {
@@ -14,10 +16,9 @@ local msg = {
 }
 
 --[ read config variables ]
-local conf_type = read_config('type')
+local conf_log_type = read_config('log_type')
 local conf_captured_request_headers = read_config('captured_request_headers')
 local conf_captured_response_headers = read_config('captured_response_headers')
-
 
 --[ grammar ]
 local syslog_grammar = syslog.build_rsyslog_grammar("%TIMESTAMP% %HOSTNAME% %syslogtag%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\n")
@@ -127,67 +128,80 @@ function Split(str, delim, maxNb)
 end
 
 function process_message ()
-    local log = read_message("Payload")
-    local fields = syslog_grammar:match(log)
-    if not fields then return -1 end
+  local log = read_message("Payload")
+  local fields = syslog_grammar:match(log)
+  if not fields then return -1 end
 
-    msg.Timestamp = fields.timestamp
-    fields.timestamp = nil
+  --[ fill blanks in defaults ]
+  if conf_captured_request_headers == nil then conf_captured_request_headers = {} end
+  if conf_captured_response_headers == nil then conf_captured_response_headers = {} end
 
-    fields.programname = fields.syslogtag.programname
-    msg.Pid = fields.syslogtag.pid or nil
-    fields.syslogtag = nil
+  msg.Timestamp = fields.timestamp
+  fields.timestamp = nil
 
-    msg.Hostname = fields.hostname
-    fields.hostname = nil
+  fields.programname = fields.syslogtag.programname
+  msg.Pid = fields.syslogtag.pid or nil
+  fields.syslogtag = nil
 
-    local m = grammar:match(fields.msg)
-    if m then
-        msg.Type      = m.Type
-        msg.Payload   = nil
-        msg.Timestamp = m.Timestamp
+  msg.Hostname = fields.hostname
+  fields.hostname = nil
 
-        --[ split cookies ]
+  local m = grammar:match(fields.msg)
+  if m then
+    msg.Type      = m.Type
+    msg.Payload   = nil
+    msg.Timestamp = m.Timestamp
 
-        --[ split headers ]
-        c_reqs_hdr = Split(m.captured_request_headers, '|')
-        c_resp_hdr = Split(m.captured_response_headers, '|')
+    -- split cookies
 
-        --[ fill fields]
-        fields.remote_addr               = m.remote_addr
-        fields.request                   = m.request
-        fields.status                    = m.status
-        fields.bytes                     = m.bytes
-        fields.protocol                  = m.protocol
-        fields.backend_name              = m.backend_name
-        fields.backend_server            = m.backend_server
-        fields.http_host                 = m.http_host
-        fields.Tq                        = m.Tq
-        fields.Tw                        = m.Tw
-        fields.Tc                        = m.Tc
-        fields.Tr                        = m.Tr
-        fields.Tt                        = m.Tt
-        fields.captured_request_cookie   = m.captured_request_cookie
-        fields.captured_response_cookie  = m.captured_response_cookie
-
-        fields.termination_state         = m.termination_state
-        fields.actconn                   = m.actconn
-        fields.feconn                    = m.feconn
-        fields.beconn                    = m.beconn
-        fields.srv_conn                  = m.srv_conn
-        fields.retries                   = m.retries
-        fields.pos_srv_queue             = m.pos_srv_queue
-        fields.pos_listener_queue        = m.pos_listener_queue
-        fields.captured_request_headers  = c_reqs_hdr
-        fields.captured_response_headers = c_resp_hdr
-    else
-       -- Fail with return -1 or do whatever you want
-       msg.Type = "Ignore"
-       msg.Payload = fields.msg
+    -- parse request headers
+    local split_reqs_hdr = {}
+    for k,v in pairs(Split(m.captured_request_headers, '|')) do
+      if conf_captured_request_headers[k] == nil then
+        split_reqs_hdr[string.format("Header%d", k)] = v
+      else
+        split_reqs_hdr[conf_captured_request_headers[k]] = v
+      end
     end
-    fields.msg = nil
 
-    msg.Fields = fields
-    inject_message(msg)
-    return 0
+    split_reqs_hdr = cjson.encode(split_reqs_hdr)
+    split_resp_hdr = Split(m.captured_response_headers, '|')
+
+    -- fill fields
+    fields.remote_addr               = m.remote_addr
+    fields.request                   = m.request
+    fields.status                    = m.status
+    fields.bytes                     = m.bytes
+    fields.protocol                  = m.protocol
+    fields.backend_name              = m.backend_name
+    fields.backend_server            = m.backend_server
+    fields.http_host                 = m.http_host
+    fields.Tq                        = m.Tq
+    fields.Tw                        = m.Tw
+    fields.Tc                        = m.Tc
+    fields.Tr                        = m.Tr
+    fields.Tt                        = m.Tt
+    fields.captured_request_cookie   = m.captured_request_cookie
+    fields.captured_response_cookie  = m.captured_response_cookie
+
+    fields.termination_state         = m.termination_state
+    fields.actconn                   = m.actconn
+    fields.feconn                    = m.feconn
+    fields.beconn                    = m.beconn
+    fields.srv_conn                  = m.srv_conn
+    fields.retries                   = m.retries
+    fields.pos_srv_queue             = m.pos_srv_queue
+    fields.pos_listener_queue        = m.pos_listener_queue
+    fields.captured_request_headers  = split_reqs_hdr
+    fields.captured_response_headers = split_resp_hdr
+  else
+    -- Fail with return -1 or do whatever you want
+    msg.Type = "Ignore"
+    msg.Payload = fields.msg
+  end
+  fields.msg = nil
+
+  msg.Fields = fields
+  inject_message(msg)
+  return 0
 end
