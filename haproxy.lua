@@ -176,11 +176,11 @@ function process_message ()
     fields.backend_name              = m.backend_name
     fields.backend_server            = m.backend_server
     fields.http_host                 = m.http_host
-    fields.Tq                        = m.Tq
-    fields.Tw                        = m.Tw
-    fields.Tc                        = m.Tc
-    fields.Tr                        = m.Tr
-    fields.Tt                        = m.Tt
+    fields.tq                        = m.Tq
+    fields.tw                        = m.Tw
+    fields.tc                        = m.Tc
+    fields.tr                        = m.Tr
+    fields.tt                        = m.Tt
     fields.captured_request_cookie   = m.captured_request_cookie
     fields.captured_response_cookie  = m.captured_response_cookie
 
